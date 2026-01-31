@@ -1,0 +1,65 @@
+# Ingestion Setup Guide
+
+This guide explains how to configure and run the FastAPI ingestion service for Docling + OpenAI embeddings + Pinecone.
+
+## Prerequisites
+
+- Python 3.11+
+- A Pinecone account and index
+- An OpenAI API key
+- Access to document sources (URLs or server-accessible file paths)
+
+## Environment Variables
+
+Create a `.env` file in the project root and populate the following:
+
+```
+OPENAI_API_KEY=your_openai_api_key
+PINECONE_API_KEY=your_pinecone_api_key
+PINECONE_ENVIRONMENT=your_pinecone_environment
+PINECONE_INDEX=rag-index
+```
+
+
+## Install Dependencies
+
+```
+pip install -r requirements.txt
+```
+
+## Run the API
+
+```
+uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+
+## Ingest Documents
+
+Send a POST request to the ingestion endpoint with URLs or file paths.
+
+```
+POST /v1/ingest
+{
+  "source_type": "url",
+  "sources": [
+    "https://example.com/docs/handbook.pdf"
+  ],
+  "namespace": "handbook",
+  "index": "rag-index",
+  "metadata": {
+    "document_title": "Company Handbook",
+    "source_system": "web"
+  }
+}
+```
+
+## Notes
+
+- Ingestion is asynchronous; the API should return `202 Accepted` with a job id.
+- File paths must be accessible to the API server at runtime.
+- The Pinecone namespace and index determine where vectors are stored.
+Optional:
+
+```
+PINECONE_NAMESPACE=default
+```

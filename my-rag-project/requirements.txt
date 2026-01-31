@@ -1,0 +1,13 @@
+fastapi
+uvicorn[standard]
+pydantic
+pydantic-settings
+python-dotenv
+openai
+pinecone
+httpx
+tenacity
+tiktoken
+numpy
+pandas
+docling
