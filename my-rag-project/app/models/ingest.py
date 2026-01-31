@@ -17,3 +17,14 @@ class IngestAccepted(BaseModel):
     job_id: str
     status: Literal["queued"] = "queued"
     received_count: int
+
+
+class IngestJobRecord(BaseModel):
+    job_id: str
+    filename: str
+    content_type: str | None = None
+    status: Literal["queued", "processing", "completed", "failed"] = "queued"
+    metadata: dict[str, Any] | None = None
+    file_path: str | None = None
+    error: str | None = None
+    chunks_processed: int | None = None

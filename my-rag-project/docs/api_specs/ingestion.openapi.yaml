@@ -22,33 +22,17 @@ paths:
       requestBody:
         required: true
         content:
-          application/json:
+          multipart/form-data:
             schema:
-              $ref: '#/components/schemas/IngestRequest'
+              $ref: '#/components/schemas/IngestMultipartRequest'
             examples:
-              urls:
-                summary: Ingest by URLs
+              single_file:
+                summary: Ingest a single file upload
                 value:
-                  source_type: url
-                  sources:
-                    - https://example.com/docs/handbook.pdf
-                    - https://example.com/docs/policy.pdf
+                  file: handbook.pdf
                   namespace: handbook
                   index: rag-index
-                  metadata:
-                    document_title: Company Handbook
-                    source_system: web
-              file_paths:
-                summary: Ingest by file paths (server-accessible)
-                value:
-                  source_type: file_path
-                  sources:
-                    - /data/uploads/handbook.pdf
-                    - /data/uploads/policy.pdf
-                  namespace: internal
-                  index: rag-index
-                  metadata:
-                    document_title: Internal Policies
+                  metadata_json: '{"document_title":"Company Handbook","source_system":"upload"}'
       responses:
         '202':
           description: Accepted for processing
@@ -80,37 +64,53 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+  /v1/ingest/{job_id}:
+    get:
+      summary: Get ingestion job status
+      operationId: getIngestStatus
+      parameters:
+        - name: job_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Job status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IngestJobRecord'
+        '404':
+          description: Job not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 
 components:
   schemas:
-    IngestRequest:
+    IngestMultipartRequest:
       type: object
       required:
-        - source_type
-        - sources
+        - file
         - namespace
         - index
       properties:
-        source_type:
+        file:
           type: string
-          description: Type of source entries.
-          enum: [url, file_path]
-        sources:
-          type: array
-          minItems: 1
-          items:
-            type: string
-          description: List of URLs or server-accessible file paths.
+          format: binary
+          description: Uploaded document file (PDF, CSV, JSON, DOCX, or TXT).
         namespace:
           type: string
           description: Pinecone namespace to upsert vectors into.
         index:
           type: string
           description: Pinecone index name.
-        metadata:
-          type: object
-          additionalProperties: true
-          description: Optional metadata applied to each document/chunk.
+        metadata_json:
+          type: string
+          description: Optional JSON string applied as metadata to the document.
         routing_hint:
           type: string
           description: Optional semantic routing hint for namespace selection.
@@ -130,6 +130,27 @@ components:
         received_count:
           type: integer
           minimum: 1
+    IngestJobRecord:
+      type: object
+      required:
+        - job_id
+        - filename
+        - status
+      properties:
+        job_id:
+          type: string
+          format: uuid
+        filename:
+          type: string
+        content_type:
+          type: string
+          nullable: true
+        status:
+          type: string
+          enum: [queued, processing, completed, failed]
+        metadata:
+          type: object
+          additionalProperties: true
     ErrorResponse:
       type: object
       required:

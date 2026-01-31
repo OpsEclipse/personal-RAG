@@ -35,22 +35,14 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 
 ## Ingest Documents
 
-Send a POST request to the ingestion endpoint with URLs or file paths.
+Send a POST request to the ingestion endpoint with a file upload.
 
 ```
-POST /v1/ingest
-{
-  "source_type": "url",
-  "sources": [
-    "https://example.com/docs/handbook.pdf"
-  ],
-  "namespace": "handbook",
-  "index": "rag-index",
-  "metadata": {
-    "document_title": "Company Handbook",
-    "source_system": "web"
-  }
-}
+POST /v1/ingest (multipart/form-data)
+- file: handbook.pdf
+- namespace: handbook
+- index: rag-index
+- metadata_json: {"document_title":"Company Handbook","source_system":"upload"}
 ```
 
 ## Notes
@@ -58,6 +50,14 @@ POST /v1/ingest
 - Ingestion is asynchronous; the API should return `202 Accepted` with a job id.
 - File paths must be accessible to the API server at runtime.
 - The Pinecone namespace and index determine where vectors are stored.
+
+## Check Job Status
+
+Use the job id from the ingestion response to check status:
+
+```
+GET /v1/ingest/{job_id}
+```
 Optional:
 
 ```
