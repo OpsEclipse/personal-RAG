@@ -98,13 +98,20 @@ def get_job_record(job_id: str) -> IngestJobRecord | None:
         return JOB_STORE.get(job_id)
 
 
+def _update_status(job_id: str, status: str) -> None:
+    """Update job status with thread-safe locking."""
+    with JOB_STORE_LOCK:
+        record = JOB_STORE.get(job_id)
+        if record is not None:
+            record.status = status  # type: ignore[assignment]
+
+
 def process_job(job_id: str) -> None:
-    """Process an ingestion job: parse → contextualize → route → embed → upsert."""
+    """Process an ingestion job: chunk → route → embed → upsert."""
     with JOB_STORE_LOCK:
         record = JOB_STORE.get(job_id)
         if record is None:
             return
-        record.status = "processing"
 
     try:
         if not record.file_path:
@@ -120,10 +127,12 @@ def process_job(job_id: str) -> None:
             raise ValueError("No index name specified.")
 
         # 1. Parse file with DocLing + HybridChunker
+        _update_status(job_id, "chunking")
         chunks = parse_file(record.file_path)
         content_type = get_content_type(record.file_path)
 
         # 2. Route to namespace(s) based on routing mode
+        _update_status(job_id, "routing")
         if routing_mode == RoutingMode.MANUAL:
             # Use provided namespace for all chunks
             chunk_namespaces = [manual_namespace] * len(chunks)
@@ -135,6 +144,7 @@ def process_job(job_id: str) -> None:
             chunk_namespaces = [doc_namespace.value] * len(chunks)
 
         # 3. Embed CONTEXTUALIZED text (not raw chunk text)
+        _update_status(job_id, "embedding")
         contextualized_texts = [
             chunk.metadata.get("context_summary", chunk.text) for chunk in chunks
         ]
@@ -146,6 +156,7 @@ def process_job(job_id: str) -> None:
             )
 
         # 4. Build vectors and group by namespace
+        _update_status(job_id, "upserting")
         vectors_by_namespace: dict[str, list[dict]] = {}
         for chunk, embedding, namespace in zip(chunks, embeddings, chunk_namespaces):
             vector = {
@@ -171,7 +182,7 @@ def process_job(job_id: str) -> None:
             upsert_vectors(index_name, namespace, vectors)
 
         record.chunks_processed = len(chunks)
-        record.status = "completed"
+        _update_status(job_id, "completed")
         cleanup_job_files(job_id)
 
     except Exception as exc:

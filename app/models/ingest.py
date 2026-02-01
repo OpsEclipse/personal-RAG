@@ -32,7 +32,15 @@ class IngestJobRecord(BaseModel):
     job_id: str
     filename: str
     content_type: str | None = None
-    status: Literal["queued", "processing", "completed", "failed"] = "queued"
+    status: Literal[
+        "queued",
+        "chunking",
+        "routing",
+        "embedding",
+        "upserting",
+        "completed",
+        "failed",
+    ] = "queued"
     metadata: dict[str, Any] | None = None
     file_path: str | None = None
     error: str | None = None
