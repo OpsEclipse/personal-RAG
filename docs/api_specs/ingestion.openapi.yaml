@@ -30,7 +30,7 @@ paths:
                 summary: Ingest a single file upload
                 value:
                   file: handbook.pdf
-                  namespace: handbook
+                  namespace: about_rag
                   index: rag-index
                   metadata_json: '{"document_title":"Company Handbook","source_system":"upload"}'
       responses:
@@ -104,7 +104,7 @@ components:
           description: Uploaded document file (PDF, CSV, JSON, DOCX, or TXT).
         namespace:
           type: string
-          description: Pinecone namespace to upsert vectors into.
+          description: Pinecone namespace to upsert vectors into (projects, experience, personal, education, about_rag).
         index:
           type: string
           description: Pinecone index name.

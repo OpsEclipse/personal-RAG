@@ -1,10 +1,14 @@
 fastapi
 uvicorn[standard]
+python-multipart
 pydantic
 pydantic-settings
 python-dotenv
 openai
 pinecone
+protobuf
+grpcio
+googleapis-common-protos
 httpx
 tenacity
 tiktoken

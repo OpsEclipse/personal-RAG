@@ -1,17 +1,22 @@
-"""Docling + HybridChunker parsing logic."""
-
-from __future__ import annotations
+"""Document parsing with Docling + HybridChunker."""
 
 import json
 import os
+import tempfile
 from dataclasses import dataclass
-from typing import Any, Iterable
+from typing import Any
 
 import pandas as pd
 
-ALLOWED_EXTENSIONS = {".pdf", ".csv", ".json", ".docx", ".txt"}
-DEFAULT_MAX_CHARS = 1200
-DEFAULT_OVERLAP = 200
+ALLOWED_EXTENSIONS = {".pdf", ".csv", ".json", ".docx", ".txt", ".md"}
+CONTENT_TYPES = {
+    ".pdf": "application/pdf",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".txt": "text/plain",
+    ".md": "text/markdown",
+    ".json": "application/json",
+    ".csv": "text/csv",
+}
 
 
 @dataclass(frozen=True)
@@ -20,333 +25,185 @@ class ParsedChunk:
     metadata: dict[str, Any]
 
 
-def parse_documents(paths: list[str]) -> list[str]:
-    chunks = parse_documents_with_metadata(paths)
-    return [chunk.text for chunk in chunks]
+def parse_file(path: str) -> list[ParsedChunk]:
+    """Parse a single file into chunks with metadata."""
+    if not os.path.isfile(path):
+        raise ValueError(f"File does not exist: {path}")
 
-
-def parse_documents_with_metadata(paths: list[str]) -> list[ParsedChunk]:
-    validate_paths(paths)
-    all_chunks: list[ParsedChunk] = []
-    for path in paths:
-        all_chunks.extend(_parse_single_path(path))
-    return all_chunks
-
-
-def validate_paths(paths: list[str]) -> None:
-    if not paths:
-        raise ValueError("At least one document path is required.")
-
-    for path in paths:
-        if path is None or not str(path).strip():
-            raise ValueError("Document path cannot be empty.")
-        if not os.path.exists(path):
-            raise ValueError(f"Document path does not exist: {path}")
-        if not os.path.isfile(path):
-            raise ValueError(f"Document path is not a file: {path}")
-
-        ext = os.path.splitext(path)[1].lower()
-        if ext not in ALLOWED_EXTENSIONS:
-            raise ValueError(f"Unsupported file type '{ext}' for {path}.")
-
-
-@dataclass(frozen=True)
-class PageInfo:
-    """Tracks page boundaries and headings from Docling parsing."""
-
-    page_number: int
-    char_start: int
-    char_end: int
-    heading: str
-
-
-def _parse_single_path(path: str) -> list[ParsedChunk]:
     ext = os.path.splitext(path)[1].lower()
+    if ext not in ALLOWED_EXTENSIONS:
+        raise ValueError(f"Unsupported file type '{ext}'.")
+
+    if ext in {".pdf", ".docx"}:
+        return _parse_with_docling(path, source_path=path)
+
     if ext in {".txt", ".json", ".csv"}:
-        text = _read_text_file(path, ext)
-        page_info: list[PageInfo] = []
-    else:
-        text, page_info = _read_docling_text_with_metadata(path)
+        return _parse_text_with_docling(path, ext)
 
-    document_title = _infer_document_title(path)
-    paragraphs = _split_paragraphs(text)
-    chunks = _hybrid_chunk_paragraphs(
-        paragraphs, max_chars=DEFAULT_MAX_CHARS, overlap=DEFAULT_OVERLAP
-    )
-
-    total = len(chunks)
-    parsed: list[ParsedChunk] = []
-    char_offset = 0
-    for idx, chunk_text in enumerate(chunks, start=1):
-        heading = _get_heading_for_chunk(char_offset, page_info)
-        page_number = _get_page_for_chunk(char_offset, page_info)
-        metadata = {
-            "source_path": path,
-            "document_title": document_title,
-            "heading": heading,
-            "page_number": page_number,
-            "chunk_index": idx,
-            "chunk_count": total,
-            "context_summary": _contextualize(chunk_text, document_title),
-        }
-        parsed.append(ParsedChunk(text=chunk_text, metadata=metadata))
-        char_offset += len(chunk_text)
-    return parsed
+    return _parse_text_with_docling(path, ext)
 
 
-def _read_docling_text_with_metadata(path: str) -> tuple[str, list[PageInfo]]:
-    """Read document with Docling and extract page/heading metadata.
+def get_content_type(path: str) -> str:
+    """Get MIME content type for a file."""
+    ext = os.path.splitext(path)[1].lower()
+    return CONTENT_TYPES.get(ext, "text/plain")
 
-    Returns:
-        Tuple of (full_text, list of PageInfo with page boundaries and headings)
-    """
+
+def _parse_with_docling(path: str, *, source_path: str) -> list[ParsedChunk]:
+    """Parse a document using Docling's HybridChunker."""
     try:
+        from docling.chunking import HybridChunker
         from docling.document_converter import DocumentConverter
     except ImportError as exc:
-        raise ValueError(
-            "Docling is required to parse PDF/DOCX files. Install docling and retry."
-        ) from exc
+        raise ValueError("Docling required. Install with: pip install docling") from exc
 
     converter = DocumentConverter()
     result = converter.convert(path)
-    text = _extract_docling_text(result)
+    doc = result.document
+
+    from app.core.config import get_settings
+
+    settings = get_settings()
+    chunker = HybridChunker(
+        tokenizer=settings.docling_tokenizer,
+        max_tokens=512,
+        merge_peers=True,
+    )
+
+    parsed_chunks = []
+    doc_title = os.path.basename(source_path)
+
+    for i, chunk in enumerate(chunker.chunk(doc)):
+        # Extract page number from chunk metadata
+        page_no = None
+        if chunk.meta.doc_items:
+            prov = getattr(chunk.meta.doc_items[0], "prov", [])
+            if prov:
+                page_no = prov[0].page_no
+
+        metadata = {
+            "source_path": source_path,
+            "document_title": doc_title,
+            "heading": chunk.meta.headings[0] if chunk.meta.headings else "",
+            "page_number": page_no or 1,
+            "chunk_index": i + 1,
+            "context_summary": chunker.contextualize(chunk),  # Native hierarchical context
+        }
+        parsed_chunks.append(ParsedChunk(text=chunk.text, metadata=metadata))
+
+    # Fallback: if doc is too simple for chunker, use full markdown export
+    if not parsed_chunks:
+        markdown = doc.export_to_markdown()
+        if not markdown.strip():
+            raise ValueError(f"No content extracted from {path}.")
+        parsed_chunks.append(
+            ParsedChunk(
+                text=markdown,
+                metadata={
+                    "source_path": source_path,
+                    "document_title": doc_title,
+                    "heading": "",
+                    "page_number": 1,
+                    "chunk_index": 1,
+                    "context_summary": f"{doc_title} [full document]",
+                },
+            )
+        )
+
+    return parsed_chunks
+
+
+def _parse_text_with_docling(path: str, ext: str) -> list[ParsedChunk]:
+    """Parse TXT/JSON/CSV by normalizing to text and running Docling."""
+    text = _read_text_payload(path, ext)
     if not text.strip():
-        raise ValueError(f"Docling returned empty text for {path}.")
+        raise ValueError(f"File is empty: {path}")
 
-    page_info = _extract_page_info(result, text)
-    return text, page_info
-
-
-def _extract_page_info(result: Any, full_text: str) -> list[PageInfo]:
-    """Extract page boundaries and headings from Docling result."""
-    page_info: list[PageInfo] = []
-
-    doc = None
-    for attr in ("document", "doc"):
-        if hasattr(result, attr):
-            doc = getattr(result, attr)
-            break
-
-    if doc is None:
-        return [PageInfo(page_number=1, char_start=0, char_end=len(full_text), heading="")]
-
-    pages = getattr(doc, "pages", None)
-    if pages and hasattr(pages, "__iter__"):
-        char_offset = 0
-        for page_num, page in enumerate(pages, start=1):
-            page_text = ""
-            if hasattr(page, "text"):
-                page_text = page.text
-            elif hasattr(page, "export_to_text"):
-                page_text = page.export_to_text()
-
-            heading = _extract_heading_from_page(page)
-            page_info.append(
-                PageInfo(
-                    page_number=page_num,
-                    char_start=char_offset,
-                    char_end=char_offset + len(page_text),
-                    heading=heading,
-                )
-            )
-            char_offset += len(page_text)
-        return page_info
-
-    items = getattr(doc, "items", None) or getattr(doc, "elements", None)
-    if items and hasattr(items, "__iter__"):
-        current_page = 1
-        current_heading = ""
-        char_offset = 0
-
-        for item in items:
-            item_page = getattr(item, "page", None) or getattr(item, "page_number", current_page)
-            if isinstance(item_page, int) and item_page != current_page:
-                page_info.append(
-                    PageInfo(
-                        page_number=current_page,
-                        char_start=page_info[-1].char_end if page_info else 0,
-                        char_end=char_offset,
-                        heading=current_heading,
-                    )
-                )
-                current_page = item_page
-                current_heading = ""
-
-            item_type = getattr(item, "type", "") or getattr(item, "label", "")
-            if "heading" in str(item_type).lower() or "title" in str(item_type).lower():
-                item_text = getattr(item, "text", "") or str(item)
-                if item_text:
-                    current_heading = item_text[:100]
-
-            item_text = getattr(item, "text", "")
-            if item_text:
-                char_offset += len(item_text)
-
-        if current_page:
-            page_info.append(
-                PageInfo(
-                    page_number=current_page,
-                    char_start=page_info[-1].char_end if page_info else 0,
-                    char_end=char_offset,
-                    heading=current_heading,
-                )
-            )
-        return page_info
-
-    return [PageInfo(page_number=1, char_start=0, char_end=len(full_text), heading="")]
+    temp_path = _write_temp_text(text)
+    try:
+        return _parse_with_docling(temp_path, source_path=path)
+    finally:
+        _safe_remove(temp_path)
 
 
-def _extract_heading_from_page(page: Any) -> str:
-    """Extract the first heading from a page object."""
-    items = getattr(page, "items", None) or getattr(page, "elements", None)
-    if not items:
-        return ""
-
-    for item in items:
-        item_type = getattr(item, "type", "") or getattr(item, "label", "")
-        if "heading" in str(item_type).lower() or "title" in str(item_type).lower():
-            text = getattr(item, "text", "") or str(item)
-            if text:
-                return text[:100]
-    return ""
-
-
-def _get_heading_for_chunk(char_offset: int, page_info: list[PageInfo]) -> str:
-    """Get the heading for a chunk based on its character offset."""
-    if not page_info:
-        return ""
-
-    for info in page_info:
-        if info.char_start <= char_offset < info.char_end:
-            return info.heading
-
-    return page_info[-1].heading if page_info else ""
-
-
-def _get_page_for_chunk(char_offset: int, page_info: list[PageInfo]) -> int:
-    """Get the page number for a chunk based on its character offset."""
-    if not page_info:
-        return 1
-
-    for info in page_info:
-        if info.char_start <= char_offset < info.char_end:
-            return info.page_number
-
-    return page_info[-1].page_number if page_info else 1
-
-
-def _read_text_file(path: str, ext: str) -> str:
+def _read_text_payload(path: str, ext: str) -> str:
+    """Load and normalize text payloads for TXT/JSON/CSV."""
     if ext == ".txt":
-        with open(path, "r", encoding="utf-8") as handle:
-            return handle.read()
-
+        with open(path, encoding="utf-8") as f:
+            return f.read()
     if ext == ".json":
-        with open(path, "r", encoding="utf-8") as handle:
-            payload = json.load(handle)
-        return json.dumps(payload, ensure_ascii=True, indent=2, sort_keys=True)
-
+        with open(path, encoding="utf-8") as f:
+            return json.dumps(json.load(f), ensure_ascii=False, indent=2)
     if ext == ".csv":
-        frame = pd.read_csv(path)
-        return frame.to_csv(index=False)
-
+        return pd.read_csv(path).to_csv(index=False)
     raise ValueError(f"Unsupported text file type '{ext}'.")
 
 
-def _read_docling_text(path: str) -> str:
+def _write_temp_text(text: str) -> str:
+    """Write normalized text to a temp file for Docling input.
+
+    Uses .md extension since Docling supports markdown but not plain text.
+    """
+    handle = tempfile.NamedTemporaryFile(delete=False, suffix=".md")
+    with open(handle.name, "w", encoding="utf-8") as f:
+        f.write(text)
+    return handle.name
+
+
+def _safe_remove(path: str) -> None:
+    """Best-effort removal of temp files."""
     try:
-        from docling.document_converter import DocumentConverter
-    except ImportError as exc:
-        raise ValueError(
-            "Docling is required to parse PDF/DOCX files. Install docling and retry."
-        ) from exc
+        os.remove(path)
+    except OSError:
+        pass
 
-    converter = DocumentConverter()
-    result = converter.convert(path)
-    text = _extract_docling_text(result)
+
+def _parse_text_file(path: str, ext: str) -> list[ParsedChunk]:
+    """Parse text files (TXT, JSON, CSV) with simple chunking."""
+    text = _read_text_payload(path, ext)
+
     if not text.strip():
-        raise ValueError(f"Docling returned empty text for {path}.")
-    return text
+        raise ValueError(f"File is empty: {path}")
+
+    # Simple paragraph-based chunking
+    chunks = _chunk_text(text, max_chars=2000)
+    doc_title = os.path.basename(path)
+
+    return [
+        ParsedChunk(
+            text=chunk_text,
+            metadata={
+                "source_path": path,
+                "document_title": doc_title,
+                "heading": "",
+                "page_number": 1,
+                "chunk_index": i + 1,
+                # Use actual text as context (with doc title prefix for multi-chunk docs)
+                "context_summary": (
+                    f"{doc_title}: {chunk_text}"
+                    if len(chunks) > 1
+                    else chunk_text
+                ),
+            },
+        )
+        for i, chunk_text in enumerate(chunks)
+    ]
 
 
-def _extract_docling_text(result: Any) -> str:
-    for attr in ("document", "doc", "document_text"):
-        if hasattr(result, attr):
-            candidate = getattr(result, attr)
-            if isinstance(candidate, str):
-                return candidate
-            if hasattr(candidate, "export_to_text"):
-                return candidate.export_to_text()
-            if hasattr(candidate, "text"):
-                return candidate.text
+def _chunk_text(text: str, max_chars: int = 2000, overlap: int = 200) -> list[str]:
+    """Split text with overlap to ensure semantic continuity."""
+    if max_chars <= 0:
+        raise ValueError("max_chars must be positive.")
+    if overlap < 0:
+        raise ValueError("overlap must be non-negative.")
+    if overlap >= max_chars:
+        raise ValueError("overlap must be smaller than max_chars.")
 
-    if hasattr(result, "export_to_text"):
-        return result.export_to_text()
-
-    raise ValueError("Docling conversion did not expose text output.")
-
-
-def _infer_document_title(path: str) -> str:
-    base = os.path.basename(path)
-    name, _ = os.path.splitext(base)
-    return name or base
-
-
-def _split_paragraphs(text: str) -> list[str]:
-    lines = [line.strip() for line in text.splitlines()]
-    paragraphs: list[str] = []
-    buffer: list[str] = []
-    for line in lines:
-        if not line:
-            if buffer:
-                paragraphs.append(" ".join(buffer).strip())
-                buffer = []
-            continue
-        buffer.append(line)
-    if buffer:
-        paragraphs.append(" ".join(buffer).strip())
-    return [p for p in paragraphs if p]
-
-
-def _hybrid_chunk_paragraphs(
-    paragraphs: Iterable[str],
-    *,
-    max_chars: int,
-    overlap: int,
-) -> list[str]:
-    chunks: list[str] = []
-    current: list[str] = []
-    current_len = 0
-
-    for paragraph in paragraphs:
-        if not paragraph:
-            continue
-
-        if current_len + len(paragraph) + 1 > max_chars and current:
-            chunk = " ".join(current).strip()
-            if chunk:
-                chunks.append(chunk)
-            current = _tail_overlap(chunk, overlap)
-            current_len = len(" ".join(current))
-
-        current.append(paragraph)
-        current_len += len(paragraph) + 1
-
-    final_chunk = " ".join(current).strip()
-    if final_chunk:
-        chunks.append(final_chunk)
-
+    chunks = []
+    start = 0
+    while start < len(text):
+        end = start + max_chars
+        chunk = text[start:end]
+        chunks.append(chunk.strip())
+        start += max_chars - overlap
     return chunks
-
-
-def _tail_overlap(chunk: str, overlap: int) -> list[str]:
-    if overlap <= 0 or not chunk:
-        return []
-    tail = chunk[-overlap:]
-    return [tail.strip()] if tail.strip() else []
-
-
-def _contextualize(chunk_text: str, document_title: str) -> str:
-    snippet = chunk_text.strip().replace("\n", " ")
-    if len(snippet) > 160:
-        snippet = snippet[:160].rstrip() + "..."
-    return f"{document_title}: {snippet}" if document_title else snippet

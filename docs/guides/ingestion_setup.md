@@ -40,7 +40,7 @@ Send a POST request to the ingestion endpoint with a file upload.
 ```
 POST /v1/ingest (multipart/form-data)
 - file: handbook.pdf
-- namespace: handbook
+- namespace: about_rag
 - index: rag-index
 - metadata_json: {"document_title":"Company Handbook","source_system":"upload"}
 ```
@@ -50,6 +50,7 @@ POST /v1/ingest (multipart/form-data)
 - Ingestion is asynchronous; the API should return `202 Accepted` with a job id.
 - File paths must be accessible to the API server at runtime.
 - The Pinecone namespace and index determine where vectors are stored.
+- Valid namespaces: projects, experience, personal, education, about_rag.
 
 ## Check Job Status
 

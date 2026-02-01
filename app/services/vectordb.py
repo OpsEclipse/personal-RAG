@@ -1,13 +1,17 @@
 """Pinecone upsert/search logic."""
 
-from pinecone import Pinecone
+from pinecone.grpc import PineconeGRPC as Pinecone
+
+from app.core.config import get_pinecone_host, get_settings
 
 UPSERT_BATCH_SIZE = 100
 
 
 def get_index(index_name: str):
-    pc = Pinecone()
-    return pc.Index(index_name)
+    settings = get_settings()
+    pc = Pinecone(api_key=settings.pinecone_api_key)
+    host = get_pinecone_host(index_name)
+    return pc.Index(host=host)
 
 
 def upsert_vectors(index_name: str, namespace: str, vectors: list[dict]) -> int:

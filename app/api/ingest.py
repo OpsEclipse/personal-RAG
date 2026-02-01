@@ -2,7 +2,9 @@ import uuid
 
 from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, UploadFile, status
 
-from app.models.ingest import IngestAccepted, IngestJobRecord
+from app.core.config import get_settings, reset_settings
+from app.models.ingest import IngestAccepted, IngestJobRecord, RoutingMode
+from app.services.embedder import reset_client as reset_embedder_client
 from app.services.file_storage import save_uploaded_file
 from app.services.ingest_queue import (
     add_file_to_queue,
@@ -15,18 +17,65 @@ from app.services.ingest_queue import (
 
 router = APIRouter(prefix="/v1", tags=["ingestion"])
 
+
+@router.post("/debug/reset")
+def reset_cached_clients() -> dict:
+    """Reset all cached clients and settings. Use after changing API keys."""
+    reset_settings()
+    reset_embedder_client()
+    return {"status": "ok", "message": "All cached clients and settings cleared"}
+
+
+@router.post("/debug/test-openai")
+def test_openai_connection() -> dict:
+    """Test OpenAI API connection with a minimal embedding request."""
+    from openai import OpenAI
+
+    settings = get_settings()
+    # Mask API key for display
+    key_preview = settings.openai_api_key[:8] + "..." if settings.openai_api_key else "NOT SET"
+
+    try:
+        client = OpenAI(api_key=settings.openai_api_key)
+        resp = client.embeddings.create(model="text-embedding-3-small", input=["test"])
+        return {
+            "status": "ok",
+            "api_key_preview": key_preview,
+            "embedding_dimensions": len(resp.data[0].embedding),
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "api_key_preview": key_preview,
+            "error_type": type(e).__name__,
+            "error_message": str(e),
+        }
+
+
 @router.post("/ingest", response_model=IngestAccepted, status_code=status.HTTP_202_ACCEPTED)
 async def ingest_documents(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
-    namespace: str = Form(...),
     index: str = Form(...),
+    namespace: str | None = Form(None),
+    routing_mode: RoutingMode = Form(RoutingMode.AUTO),
     metadata_json: str | None = Form(None),
-    routing_hint: str | None = Form(None),
 ) -> IngestAccepted:
+    """Ingest a document into the RAG system.
+
+    Args:
+        file: The document file (PDF, DOCX, TXT, JSON, CSV)
+        index: Pinecone index name
+        namespace: Target namespace (required for manual mode, optional otherwise)
+        routing_mode: How to determine namespace:
+            - auto (default): LLM classifies at document level
+            - manual: Use provided namespace, no LLM
+            - per_chunk: LLM classifies each chunk individually
+        metadata_json: Optional JSON string with custom metadata
+    """
     filename = file.filename or ""
     try:
-        validate_ingest_request(filename, namespace, index)
+        validate_ingest_request(filename, namespace, index, routing_mode)
         metadata = parse_metadata_json(metadata_json)
     except ValueError as exc:
         raise HTTPException(
@@ -44,7 +93,7 @@ async def ingest_documents(
         file_path=file_path,
         namespace=namespace,
         index=index,
-        routing_hint=routing_hint,
+        routing_mode=routing_mode,
         metadata=metadata,
     )
     background_tasks.add_task(process_job, job_id)
