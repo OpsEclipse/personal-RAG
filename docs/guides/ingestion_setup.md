@@ -11,12 +11,11 @@ This guide explains how to configure and run the FastAPI ingestion service for D
 
 ## Environment Variables
 
-Create a `.env` file in the project root and populate the following:
+Create a `my.env` file in the project root and populate the following:
 
 ```
 OPENAI_API_KEY=your_openai_api_key
 PINECONE_API_KEY=your_pinecone_api_key
-PINECONE_ENVIRONMENT=your_pinecone_environment
 PINECONE_INDEX=rag-index
 ```
 
@@ -41,7 +40,7 @@ Send a POST request to the ingestion endpoint with a file upload.
 POST /v1/ingest (multipart/form-data)
 - file: handbook.pdf
 - namespace: about_rag
-- index: rag-index
+- index: rag-index (optional; defaults to PINECONE_INDEX)
 - metadata_json: {"document_title":"Company Handbook","source_system":"upload"}
 ```
 
@@ -50,6 +49,7 @@ POST /v1/ingest (multipart/form-data)
 - Ingestion is asynchronous; the API should return `202 Accepted` with a job id.
 - File paths must be accessible to the API server at runtime.
 - The Pinecone namespace and index determine where vectors are stored.
+- If `index` is omitted, the API uses `PINECONE_INDEX` from `my.env`.
 - Valid namespaces: projects, experience, personal, education, about_rag.
 
 ## Check Job Status

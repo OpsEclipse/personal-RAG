@@ -95,8 +95,6 @@ components:
       type: object
       required:
         - file
-        - namespace
-        - index
       properties:
         file:
           type: string
@@ -104,16 +102,16 @@ components:
           description: Uploaded document file (PDF, CSV, JSON, DOCX, or TXT).
         namespace:
           type: string
-          description: Pinecone namespace to upsert vectors into (projects, experience, personal, education, about_rag).
+          description: Pinecone namespace to upsert vectors into (required when routing_mode is manual).
         index:
           type: string
-          description: Pinecone index name.
+          description: Pinecone index name. Defaults to PINECONE_INDEX from my.env when omitted.
         metadata_json:
           type: string
           description: Optional JSON string applied as metadata to the document.
-        routing_hint:
+        routing_mode:
           type: string
-          description: Optional semantic routing hint for namespace selection.
+          description: Routing mode for namespaces (auto, manual, per_chunk).
     IngestAccepted:
       type: object
       required:

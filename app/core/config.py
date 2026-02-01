@@ -18,9 +18,11 @@ def reset_settings() -> None:
 @dataclass(frozen=True)
 class Settings:
     openai_api_key: str
+    openrouter_api_key: str
     pinecone_api_key: str
-    ollama_base_url: str = "http://localhost:11434"
-    ollama_model: str = "gemma3:4b"
+    pinecone_index: str
+    openrouter_base_url: str = "https://openrouter.ai/api/v1"
+    openrouter_model: str = "meta-llama/llama-3.2-3b-instruct:free"
     pinecone_host: str | None = None
     docling_tokenizer: str = "gpt2"
 
@@ -66,10 +68,20 @@ def get_settings() -> Settings:
 
     _SETTINGS = Settings(
         openai_api_key=_required_env("OPENAI_API_KEY"),
-        ollama_base_url=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434").strip()
-        or "http://localhost:11434",
-        ollama_model=os.getenv("OLLAMA_MODEL", "gemma3:4b").strip() or "gemma3:4b",
+        openrouter_api_key=_required_env("OPENROUTER_API_KEY"),
+        openrouter_base_url=(
+            os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1").strip()
+            or "https://openrouter.ai/api/v1"
+        ),
+        openrouter_model=(
+            os.getenv(
+                "OPENROUTER_MODEL",
+                "meta-llama/llama-3.2-3b-instruct:free",
+            ).strip()
+            or "meta-llama/llama-3.2-3b-instruct:free"
+        ),
         pinecone_api_key=_required_env("PINECONE_API_KEY"),
+        pinecone_index=_required_env("PINECONE_INDEX"),
         pinecone_host=os.getenv("PINECONE_HOST", "").strip() or None,
         docling_tokenizer=os.getenv("DOCLING_TOKENIZER", "gpt2").strip() or "gpt2",
     )

@@ -56,7 +56,7 @@ def test_openai_connection() -> dict:
 async def ingest_documents(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
-    index: str = Form(...),
+    index: str | None = Form(None),
     namespace: str | None = Form(None),
     routing_mode: RoutingMode = Form(RoutingMode.AUTO),
     metadata_json: str | None = Form(None),
@@ -75,6 +75,8 @@ async def ingest_documents(
     """
     filename = file.filename or ""
     try:
+        if not index or not index.strip():
+            index = get_settings().pinecone_index
         validate_ingest_request(filename, namespace, index, routing_mode)
         metadata = parse_metadata_json(metadata_json)
     except ValueError as exc:

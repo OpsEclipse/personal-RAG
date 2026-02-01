@@ -10,12 +10,18 @@ _client: httpx.Client | None = None
 
 
 def _get_client() -> httpx.Client:
-    """Lazy initialization of Ollama HTTP client."""
+    """Lazy initialization of OpenRouter HTTP client."""
     global _client
     if _client is None:
         settings = get_settings()
+        if not settings.openrouter_api_key.strip():
+            raise ValueError("Missing OpenRouter API key.")
         _client = httpx.Client(
-            base_url=settings.ollama_base_url.rstrip("/"),
+            base_url=settings.openrouter_base_url.rstrip("/"),
+            headers={
+                "Authorization": f"Bearer {settings.openrouter_api_key}",
+                "Accept": "application/json",
+            },
             timeout=20.0,
         )
     return _client
@@ -105,20 +111,24 @@ def _call_llm_for_classification(text: str, headings: list[str]) -> Namespace:
     if not text.strip() and not headings:
         return Namespace.PROJECTS
 
-    client = _get_client()
-    prompt = _build_classification_prompt(text, headings)
-
     settings = get_settings()
+    model = _normalize_model(settings.openrouter_model)
+    prompt = _build_classification_prompt(text, headings)
+    if not model or not prompt.strip():
+        return Namespace.PROJECTS
+
+    try:
+        client = _get_client()
+    except ValueError:
+        return Namespace.PROJECTS
     try:
         response = client.post(
-            "/api/generate",
+            "/chat/completions",
             json={
-                "model": settings.ollama_model,
-                "prompt": prompt,
+                "model": model,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0,
                 "stream": False,
-                "options": {
-                    "temperature": 0,
-                },
             },
         )
         response.raise_for_status()
@@ -126,7 +136,7 @@ def _call_llm_for_classification(text: str, headings: list[str]) -> Namespace:
     except (httpx.HTTPError, ValueError, TypeError):
         return Namespace.PROJECTS
 
-    result_raw = str(payload.get("response", "")).strip().lower()
+    result_raw = _extract_message_content(payload)
     first_line = result_raw.splitlines()[0] if result_raw else ""
     first_token = first_line.split(maxsplit=1)[0] if first_line else ""
     result = first_token.strip("`'\".,:;()[]{}")
@@ -139,3 +149,24 @@ def _call_llm_for_classification(text: str, headings: list[str]) -> Namespace:
 def _get_context_text(chunk: ParsedChunk) -> str:
     """Prefer contextualized text when available for routing."""
     return chunk.metadata.get("context_summary") or chunk.text
+
+
+def _normalize_model(model: str) -> str:
+    """Ensure we use an OpenRouter free-tier model variant."""
+    normalized = model.strip()
+    if not normalized:
+        return ""
+    if ":free" not in normalized:
+        normalized = f"{normalized}:free"
+    return normalized
+
+
+def _extract_message_content(payload: dict) -> str:
+    """Safely extract the assistant message content from OpenRouter payload."""
+    choices = payload.get("choices")
+    if not isinstance(choices, list) or not choices:
+        return ""
+    first = choices[0] if isinstance(choices[0], dict) else {}
+    message = first.get("message") if isinstance(first, dict) else {}
+    content = message.get("content") if isinstance(message, dict) else ""
+    return str(content).strip().lower()
