@@ -1,0 +1,18 @@
+{
+  "version": "0.2",
+  "language": "en",
+  "words": [
+    "chunker",
+    "docling",
+    "contextualize",
+    "upsert",
+    "pinecone",
+    "vectordb",
+    "embedder"
+  ],
+  "ignorePaths": [
+    "node_modules",
+    ".git",
+    "*.lock"
+  ]
+}
