@@ -8,6 +8,10 @@ from typing import Any
 
 import pandas as pd
 
+from app.core.logging import get_logger
+
+logger = get_logger(__name__)
+
 ALLOWED_EXTENSIONS = {".pdf", ".csv", ".json", ".docx", ".txt", ".md"}
 CONTENT_TYPES = {
     ".pdf": "application/pdf",
@@ -34,13 +38,13 @@ def parse_file(path: str) -> list[ParsedChunk]:
     if ext not in ALLOWED_EXTENSIONS:
         raise ValueError(f"Unsupported file type '{ext}'.")
 
-    if ext in {".pdf", ".docx"}:
+    if ext in {".pdf", ".docx", ".md"}:
         return _parse_with_docling(path, source_path=path)
 
     if ext in {".txt", ".json", ".csv"}:
         return _parse_text_with_docling(path, ext)
 
-    return _parse_text_with_docling(path, ext)
+    raise ValueError(f"Unsupported file type '{ext}'.")
 
 
 def get_content_type(path: str) -> str:
@@ -57,6 +61,7 @@ def _parse_with_docling(path: str, *, source_path: str) -> list[ParsedChunk]:
     except ImportError as exc:
         raise ValueError("Docling required. Install with: pip install docling") from exc
 
+    logger.debug("Converting document: %s", path)
     converter = DocumentConverter()
     result = converter.convert(path)
     doc = result.document
@@ -87,12 +92,13 @@ def _parse_with_docling(path: str, *, source_path: str) -> list[ParsedChunk]:
             "heading": chunk.meta.headings[0] if chunk.meta.headings else "",
             "page_number": page_no or 1,
             "chunk_index": i + 1,
-            "context_summary": chunker.contextualize(chunk),  # Native hierarchical context
+            "context_summary": chunker.contextualize(chunk=chunk),  # Native hierarchical context
         }
         parsed_chunks.append(ParsedChunk(text=chunk.text, metadata=metadata))
 
     # Fallback: if doc is too simple for chunker, use full markdown export
     if not parsed_chunks:
+        logger.debug("No chunks from chunker, using full markdown export")
         markdown = doc.export_to_markdown()
         if not markdown.strip():
             raise ValueError(f"No content extracted from {path}.")
@@ -110,6 +116,7 @@ def _parse_with_docling(path: str, *, source_path: str) -> list[ParsedChunk]:
             )
         )
 
+    logger.debug("Parsed %d chunks from %s", len(parsed_chunks), source_path)
     return parsed_chunks
 
 
@@ -156,54 +163,3 @@ def _safe_remove(path: str) -> None:
         os.remove(path)
     except OSError:
         pass
-
-
-def _parse_text_file(path: str, ext: str) -> list[ParsedChunk]:
-    """Parse text files (TXT, JSON, CSV) with simple chunking."""
-    text = _read_text_payload(path, ext)
-
-    if not text.strip():
-        raise ValueError(f"File is empty: {path}")
-
-    # Simple paragraph-based chunking
-    chunks = _chunk_text(text, max_chars=2000)
-    doc_title = os.path.basename(path)
-
-    return [
-        ParsedChunk(
-            text=chunk_text,
-            metadata={
-                "source_path": path,
-                "document_title": doc_title,
-                "heading": "",
-                "page_number": 1,
-                "chunk_index": i + 1,
-                # Use actual text as context (with doc title prefix for multi-chunk docs)
-                "context_summary": (
-                    f"{doc_title}: {chunk_text}"
-                    if len(chunks) > 1
-                    else chunk_text
-                ),
-            },
-        )
-        for i, chunk_text in enumerate(chunks)
-    ]
-
-
-def _chunk_text(text: str, max_chars: int = 2000, overlap: int = 200) -> list[str]:
-    """Split text with overlap to ensure semantic continuity."""
-    if max_chars <= 0:
-        raise ValueError("max_chars must be positive.")
-    if overlap < 0:
-        raise ValueError("overlap must be non-negative.")
-    if overlap >= max_chars:
-        raise ValueError("overlap must be smaller than max_chars.")
-
-    chunks = []
-    start = 0
-    while start < len(text):
-        end = start + max_chars
-        chunk = text[start:end]
-        chunks.append(chunk.strip())
-        start += max_chars - overlap
-    return chunks

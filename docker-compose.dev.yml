@@ -1,0 +1,11 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    env_file:
+      - my.env
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./app:/app/app

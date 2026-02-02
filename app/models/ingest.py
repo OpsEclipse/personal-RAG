@@ -22,9 +22,14 @@ class IngestRequest(BaseModel):
     routing_mode: RoutingMode = RoutingMode.AUTO
 
 
-class IngestAccepted(BaseModel):
+class IngestJobSummary(BaseModel):
     job_id: str
+    filename: str
     status: Literal["queued"] = "queued"
+
+
+class IngestAccepted(BaseModel):
+    jobs: list[IngestJobSummary]
     received_count: int
 
 
@@ -45,3 +50,4 @@ class IngestJobRecord(BaseModel):
     file_path: str | None = None
     error: str | None = None
     chunks_processed: int | None = None
+    routing_fallback_used: bool = False

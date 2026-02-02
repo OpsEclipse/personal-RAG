@@ -3,10 +3,16 @@
 import httpx
 
 from app.core.config import get_settings
+from app.core.logging import get_logger
 from app.core.namespaces import Namespace, get_namespace_prompt
 from app.services.parser import ParsedChunk
 
+logger = get_logger(__name__)
+
 _client: httpx.Client | None = None
+
+# Track if fallback was used in the last classification call
+_last_call_used_fallback: bool = False
 
 
 def _get_client() -> httpx.Client:
@@ -56,7 +62,7 @@ def classify_document(chunks: list[ParsedChunk]) -> Namespace:
         The determined namespace for the entire document
     """
     if not chunks:
-        return Namespace.PROJECTS  # Default fallback
+        return Namespace.PROFESSIONAL_LIFE  # Default fallback
 
     # Gather all unique headings from the document
     headings = []
@@ -108,19 +114,29 @@ def _call_llm_for_classification(text: str, headings: list[str]) -> Namespace:
     Returns:
         The determined namespace
     """
+    global _last_call_used_fallback
+    _last_call_used_fallback = False
+
     if not text.strip() and not headings:
-        return Namespace.PROJECTS
+        logger.warning("Empty content for classification, using fallback namespace")
+        _last_call_used_fallback = True
+        return Namespace.PROFESSIONAL_LIFE
 
     settings = get_settings()
     model = _normalize_model(settings.openrouter_model)
     prompt = _build_classification_prompt(text, headings)
     if not model or not prompt.strip():
-        return Namespace.PROJECTS
+        logger.warning("Missing model or prompt, using fallback namespace")
+        _last_call_used_fallback = True
+        return Namespace.PROFESSIONAL_LIFE
 
     try:
         client = _get_client()
-    except ValueError:
-        return Namespace.PROJECTS
+    except ValueError as e:
+        logger.error("Failed to initialize OpenRouter client: %s", e)
+        _last_call_used_fallback = True
+        return Namespace.PROFESSIONAL_LIFE
+
     try:
         response = client.post(
             "/chat/completions",
@@ -133,17 +149,58 @@ def _call_llm_for_classification(text: str, headings: list[str]) -> Namespace:
         )
         response.raise_for_status()
         payload = response.json()
-    except (httpx.HTTPError, ValueError, TypeError):
-        return Namespace.PROJECTS
+    except httpx.TimeoutException as e:
+        logger.error("OpenRouter request timed out: %s", e)
+        _last_call_used_fallback = True
+        return Namespace.PROFESSIONAL_LIFE
+    except httpx.HTTPStatusError as e:
+        logger.error(
+            "OpenRouter HTTP error %s: %s",
+            e.response.status_code,
+            e.response.text[:200] if e.response.text else "no body",
+        )
+        _last_call_used_fallback = True
+        return Namespace.PROFESSIONAL_LIFE
+    except httpx.HTTPError as e:
+        logger.error("OpenRouter request failed: %s", e)
+        _last_call_used_fallback = True
+        return Namespace.PROFESSIONAL_LIFE
+    except (ValueError, TypeError) as e:
+        logger.error("Failed to parse OpenRouter response: %s", e)
+        _last_call_used_fallback = True
+        return Namespace.PROFESSIONAL_LIFE
 
     result_raw = _extract_message_content(payload)
+    if not result_raw:
+        logger.warning("Empty response from OpenRouter, using fallback namespace")
+        _last_call_used_fallback = True
+        return Namespace.PROFESSIONAL_LIFE
+
     first_line = result_raw.splitlines()[0] if result_raw else ""
     first_token = first_line.split(maxsplit=1)[0] if first_line else ""
     result = first_token.strip("`'\".,:;()[]{}")
 
     # Map response to namespace, with fallback
     namespace_map = {ns.value: ns for ns in Namespace}
-    return namespace_map.get(result, Namespace.PROJECTS)
+    namespace = namespace_map.get(result)
+    if namespace is None:
+        logger.warning(
+            "Unrecognized namespace '%s' from LLM, using fallback", result
+        )
+        _last_call_used_fallback = True
+        return Namespace.PROFESSIONAL_LIFE
+
+    logger.debug("Classified content as namespace: %s", namespace.value)
+    return namespace
+
+
+def did_last_call_use_fallback() -> bool:
+    """Check if the last classification call used a fallback namespace.
+
+    Returns:
+        True if the last call fell back to default namespace due to an error
+    """
+    return _last_call_used_fallback
 
 
 def _get_context_text(chunk: ParsedChunk) -> str:

@@ -17,16 +17,26 @@ class TestIngestQueue(unittest.TestCase):
 
     def test_validate_ingest_request_rejects_empty_values(self) -> None:
         with self.assertRaises(ValueError):
-            ingest_queue.validate_ingest_request("", "namespace", "index")
+            ingest_queue.validate_ingest_request("", "namespace", "index", ingest_queue.RoutingMode.MANUAL)
 
         with self.assertRaises(ValueError):
-            ingest_queue.validate_ingest_request("file.exe", "namespace", "index")
+            ingest_queue.validate_ingest_request("file.exe", "namespace", "index", ingest_queue.RoutingMode.MANUAL)
 
         with self.assertRaises(ValueError):
-            ingest_queue.validate_ingest_request("file.pdf", "", "index")
+            ingest_queue.validate_ingest_request("file.pdf", "", "index", ingest_queue.RoutingMode.MANUAL)
 
         with self.assertRaises(ValueError):
-            ingest_queue.validate_ingest_request("file.pdf", "namespace", " ")
+            ingest_queue.validate_ingest_request("file.pdf", "namespace", " ", ingest_queue.RoutingMode.MANUAL)
+
+        with self.assertRaises(ValueError):
+            ingest_queue.validate_ingest_request(
+                "file.pdf", "namespace", "index", ingest_queue.RoutingMode.AUTO
+            )
+
+        with self.assertRaises(ValueError):
+            ingest_queue.validate_ingest_request(
+                "file.pdf", "namespace", "index", ingest_queue.RoutingMode.PER_CHUNK
+            )
 
     def test_parse_metadata_json(self) -> None:
         self.assertIsNone(ingest_queue.parse_metadata_json(None))
@@ -51,7 +61,7 @@ class TestIngestQueue(unittest.TestCase):
             file_path="/tmp/test/file.pdf",
             namespace="namespace",
             index="index",
-            routing_hint="hint",
+            routing_mode=ingest_queue.RoutingMode.MANUAL,
             metadata={"source": "unit-test"},
         )
         record = ingest_queue.JOB_STORE.get(job_id)
@@ -60,7 +70,7 @@ class TestIngestQueue(unittest.TestCase):
         self.assertEqual(record.file_path, "/tmp/test/file.pdf")
         self.assertEqual(record.metadata["namespace"], "namespace")
         self.assertEqual(record.metadata["index"], "index")
-        self.assertEqual(record.metadata["routing_hint"], "hint")
+        self.assertEqual(record.metadata["routing_mode"], "manual")
         self.assertEqual(record.metadata["metadata"], {"source": "unit-test"})
         self.assertIn(job_id, ingest_queue.JOB_QUEUE)
 

@@ -11,6 +11,9 @@ from tenacity import (
 )
 
 from app.core.config import get_settings
+from app.core.logging import get_logger
+
+logger = get_logger(__name__)
 
 _client: OpenAI | None = None
 
@@ -81,17 +84,20 @@ def embed_texts_batched(
     if not texts:
         return []
 
+    logger.info("Embedding %d texts in batches of %d", len(texts), EMBEDDING_BATCH_SIZE)
     all_embeddings: list[list[float]] = []
     num_batches = (len(texts) + EMBEDDING_BATCH_SIZE - 1) // EMBEDDING_BATCH_SIZE
 
     for i in range(0, len(texts), EMBEDDING_BATCH_SIZE):
         batch = texts[i : i + EMBEDDING_BATCH_SIZE]
+        batch_num = i // EMBEDDING_BATCH_SIZE + 1
+        logger.debug("Embedding batch %d/%d (%d texts)", batch_num, num_batches, len(batch))
         batch_embeddings = embed_texts(batch, model=model)
         all_embeddings.extend(batch_embeddings)
 
         # Add delay between batches to respect rate limits (skip after last batch)
-        batch_num = i // EMBEDDING_BATCH_SIZE + 1
         if batch_num < num_batches:
             time.sleep(INTER_BATCH_DELAY)
 
+    logger.info("Successfully embedded %d texts", len(all_embeddings))
     return all_embeddings

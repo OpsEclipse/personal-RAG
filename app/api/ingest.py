@@ -3,14 +3,14 @@ import uuid
 from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, UploadFile, status
 
 from app.core.config import get_settings, reset_settings
-from app.models.ingest import IngestAccepted, IngestJobRecord, RoutingMode
+from app.models.ingest import IngestAccepted, IngestJobRecord, IngestJobSummary, RoutingMode
 from app.services.embedder import reset_client as reset_embedder_client
 from app.services.file_storage import save_uploaded_file
 from app.services.ingest_queue import (
     add_file_to_queue,
     get_job_record,
     parse_metadata_json,
-    process_job,
+    process_job_with_limit,
     validate_ingest_request,
     validate_job_id,
 )
@@ -55,29 +55,36 @@ def test_openai_connection() -> dict:
 @router.post("/ingest", response_model=IngestAccepted, status_code=status.HTTP_202_ACCEPTED)
 async def ingest_documents(
     background_tasks: BackgroundTasks,
-    file: UploadFile = File(...),
+    file: list[UploadFile] = File(...),
     index: str | None = Form(None),
     namespace: str | None = Form(None),
     routing_mode: RoutingMode = Form(RoutingMode.AUTO),
     metadata_json: str | None = Form(None),
 ) -> IngestAccepted:
-    """Ingest a document into the RAG system.
+    """Ingest one or more documents into the RAG system.
 
     Args:
-        file: The document file (PDF, DOCX, TXT, JSON, CSV)
+        file: One or more document files (PDF, DOCX, TXT, JSON, CSV)
         index: Pinecone index name
-        namespace: Target namespace (required for manual mode, optional otherwise)
+        namespace: Target namespace (required for manual mode; must be omitted otherwise)
         routing_mode: How to determine namespace:
             - auto (default): LLM classifies at document level
             - manual: Use provided namespace, no LLM
             - per_chunk: LLM classifies each chunk individually
         metadata_json: Optional JSON string with custom metadata
     """
-    filename = file.filename or ""
     try:
+        if not file:
+            raise ValueError("At least one file is required.")
+        namespace = namespace.strip() if namespace else None
+        if namespace == "":
+            namespace = None
         if not index or not index.strip():
             index = get_settings().pinecone_index
-        validate_ingest_request(filename, namespace, index, routing_mode)
+        index = index.strip()
+        for upload in file:
+            filename = upload.filename or ""
+            validate_ingest_request(filename, namespace, index, routing_mode)
         metadata = parse_metadata_json(metadata_json)
     except ValueError as exc:
         raise HTTPException(
@@ -85,22 +92,26 @@ async def ingest_documents(
             detail=str(exc),
         ) from exc
 
-    job_id = str(uuid.uuid4())
-    file_path = save_uploaded_file(job_id, file)
+    jobs: list[IngestJobSummary] = []
+    for upload in file:
+        filename = upload.filename or ""
+        job_id = str(uuid.uuid4())
+        file_path = save_uploaded_file(job_id, upload)
 
-    add_file_to_queue(
-        job_id=job_id,
-        filename=filename,
-        content_type=file.content_type,
-        file_path=file_path,
-        namespace=namespace,
-        index=index,
-        routing_mode=routing_mode,
-        metadata=metadata,
-    )
-    background_tasks.add_task(process_job, job_id)
+        add_file_to_queue(
+            job_id=job_id,
+            filename=filename,
+            content_type=upload.content_type,
+            file_path=file_path,
+            namespace=namespace,
+            index=index,
+            routing_mode=routing_mode,
+            metadata=metadata,
+        )
+        background_tasks.add_task(process_job_with_limit, job_id)
+        jobs.append(IngestJobSummary(job_id=job_id, filename=filename))
 
-    return IngestAccepted(job_id=job_id, received_count=1)
+    return IngestAccepted(jobs=jobs, received_count=len(jobs))
 
 
 @router.get("/ingest/{job_id}", response_model=IngestJobRecord)

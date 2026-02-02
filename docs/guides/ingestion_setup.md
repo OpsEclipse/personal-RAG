@@ -34,27 +34,31 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 
 ## Ingest Documents
 
-Send a POST request to the ingestion endpoint with a file upload.
+Send a POST request to the ingestion endpoint with one or more file uploads.
 
 ```
 POST /v1/ingest (multipart/form-data)
 - file: handbook.pdf
-- namespace: about_rag
+- file: policies.docx
+- routing_mode: manual | auto | per_chunk
+- namespace: about_rag (required only when routing_mode=manual; must be omitted otherwise)
 - index: rag-index (optional; defaults to PINECONE_INDEX)
 - metadata_json: {"document_title":"Company Handbook","source_system":"upload"}
 ```
 
 ## Notes
 
-- Ingestion is asynchronous; the API should return `202 Accepted` with a job id.
+- Ingestion is asynchronous; the API returns `202 Accepted` with a job list (one per file).
 - File paths must be accessible to the API server at runtime.
-- The Pinecone namespace and index determine where vectors are stored.
+- The Pinecone namespace and index determine where vectors are stored when routing_mode=manual.
 - If `index` is omitted, the API uses `PINECONE_INDEX` from `my.env`.
-- Valid namespaces: projects, experience, personal, education, about_rag.
+- Valid namespaces: personal_life, professional_life, about_rag.
+- To bypass LLM routing, set routing_mode=manual and provide namespace.
+- When routing_mode is auto or per_chunk, namespace must be omitted.
 
 ## Check Job Status
 
-Use the job id from the ingestion response to check status:
+Use each job id from the ingestion response to check status:
 
 ```
 GET /v1/ingest/{job_id}

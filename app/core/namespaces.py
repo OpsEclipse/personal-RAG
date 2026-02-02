@@ -6,29 +6,19 @@ from enum import Enum
 class Namespace(str, Enum):
     """Valid namespaces for the personal portfolio."""
 
-    PROJECTS = "projects"
-    EXPERIENCE = "experience"
-    PERSONAL = "personal"
-    EDUCATION = "education"
+    PERSONAL_LIFE = "personal_life"
+    PROFESSIONAL_LIFE = "professional_life"
     ABOUT_RAG = "about_rag"
 
 
 NAMESPACE_DESCRIPTIONS: dict[Namespace, str] = {
-    Namespace.PROJECTS: (
-        "Technical projects, code repositories, portfolio work, side projects, "
-        "open source contributions, hackathon projects, technical demos, and software builds."
-    ),
-    Namespace.EXPERIENCE: (
-        "Work experience, internships, jobs, professional roles, career history, "
-        "responsibilities, achievements at companies, and employment-related content."
-    ),
-    Namespace.PERSONAL: (
+    Namespace.PERSONAL_LIFE: (
         "Personal life, hobbies, interests, values, beliefs, personal stories, "
         "travel, lifestyle, relationships, and non-professional aspects of life."
     ),
-    Namespace.EDUCATION: (
-        "Education background, degrees, certifications, courses, skills, learning, "
-        "academic achievements, training, workshops, and knowledge acquisition."
+    Namespace.PROFESSIONAL_LIFE: (
+        "Work experience, projects, internships, jobs, professional roles, career history, "
+        "responsibilities, achievements at companies, and employment-related content."
     ),
     Namespace.ABOUT_RAG: (
         "System documentation about this RAG project, architecture notes, "

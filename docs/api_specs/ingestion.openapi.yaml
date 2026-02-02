@@ -27,9 +27,12 @@ paths:
               $ref: '#/components/schemas/IngestMultipartRequest'
             examples:
               single_file:
-                summary: Ingest a single file upload
+                summary: Ingest one or more file uploads
                 value:
-                  file: handbook.pdf
+                  file:
+                    - handbook.pdf
+                    - policies.docx
+                  routing_mode: manual
                   namespace: about_rag
                   index: rag-index
                   metadata_json: '{"document_title":"Company Handbook","source_system":"upload"}'
@@ -43,8 +46,13 @@ paths:
               examples:
                 accepted:
                   value:
-                    job_id: 9d6f7f8b-6a3d-4b3a-9d0c-1e2a4c8d9f01
-                    status: queued
+                    jobs:
+                      - job_id: 9d6f7f8b-6a3d-4b3a-9d0c-1e2a4c8d9f01
+                        filename: handbook.pdf
+                        status: queued
+                      - job_id: 8a3f7d4c-1b2a-4c9e-9f01-2d3e4f5a6b7c
+                        filename: policies.docx
+                        status: queued
                     received_count: 2
         '400':
           description: Invalid request
@@ -97,12 +105,15 @@ components:
         - file
       properties:
         file:
-          type: string
-          format: binary
-          description: Uploaded document file (PDF, CSV, JSON, DOCX, or TXT).
+          type: array
+          items:
+            type: string
+            format: binary
+          description: One or more uploaded document files (PDF, CSV, JSON, DOCX, or TXT).
         namespace:
           type: string
-          description: Pinecone namespace to upsert vectors into (required when routing_mode is manual).
+          description: Pinecone namespace to upsert vectors into (required when routing_mode is manual; must be omitted otherwise).
+          enum: [personal_life, professional_life, about_rag]
         index:
           type: string
           description: Pinecone index name. Defaults to PINECONE_INDEX from my.env when omitted.
@@ -111,20 +122,30 @@ components:
           description: Optional JSON string applied as metadata to the document.
         routing_mode:
           type: string
-          description: Routing mode for namespaces (auto, manual, per_chunk).
+          description: Routing mode for namespaces (auto, manual, per_chunk). Manual uses the provided namespace and skips LLM routing.
     IngestAccepted:
       type: object
       required:
-        - job_id
-        - status
+        - jobs
         - received_count
       properties:
-        job_id:
-          type: string
-          format: uuid
-        status:
-          type: string
-          enum: [queued]
+        jobs:
+          type: array
+          items:
+            type: object
+            required:
+              - job_id
+              - filename
+              - status
+            properties:
+              job_id:
+                type: string
+                format: uuid
+              filename:
+                type: string
+              status:
+                type: string
+                enum: [queued]
         received_count:
           type: integer
           minimum: 1
@@ -145,7 +166,7 @@ components:
           nullable: true
         status:
           type: string
-          enum: [queued, processing, completed, failed]
+          enum: [queued, chunking, routing, embedding, upserting, completed, failed]
         metadata:
           type: object
           additionalProperties: true
